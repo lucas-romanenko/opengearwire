@@ -24,7 +24,7 @@ wire format is in [`opengearwire/docs/PROTOCOL.md`](opengearwire/docs/PROTOCOL.m
 ## Install
 
 ```sh
-pip install "opengearwire @ git+https://github.com/lucas-romanenko/opengearwire.git@v0.1.0"
+pip install "opengearwire @ git+https://github.com/lucas-romanenko/opengearwire.git@main"   # a tag once he releases
 ```
 
 Python 3.10 or newer. Standard library only.
