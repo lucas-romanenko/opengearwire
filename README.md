@@ -146,9 +146,9 @@ python tools/fixture_from_capture.py CAPTURE.pcapng opengearwire/fixtures/NAME.j
 
 Raw captures never go into git (`.gitignore` blocks them).
 
-A release is a tag `v<version>` matching `project.version`: the tag push
-publishes it to PyPI (`.github/workflows/publish.yml`, trusted
-publishing, no token in the repository).
+A release is a tag `v<version>` matching `project.version`, built
+(`python -m build`) and uploaded to PyPI from that tag with `twine`; no
+token lives in this repository.
 
 Not affiliated with or endorsed by Ross Video Ltd. openGear, DashBoard
 and OGX are trademarks of Ross Video.
