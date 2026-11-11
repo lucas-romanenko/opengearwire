@@ -75,6 +75,10 @@ class FakeFrame:
 
     ``report(slot, oid, raw)`` pushes a changed value to the connected
     client and answers later reads of it with the new value.
+
+    ``delay`` (seconds) holds every answer that long, as a network round
+    trip plus the card's own time would (the capture: 4 ms median, a slow
+    site 20 ms or more). Devices answer in parallel, as on a real frame.
     """
 
     def __init__(
@@ -84,12 +88,14 @@ class FakeFrame:
         host: str = "127.0.0.1",
         port: int = 0,
         beat: float = 0.25,
+        delay: float = 0.0,
     ):
         if session is None:
             session = load_session()
         self.hang_up = hang_up
         self.busy = False
         self.beat = beat
+        self.delay = delay
         self.replies = defaultdict(list)
         self.announce = []
         self._reports = {}
@@ -181,6 +187,11 @@ class FakeFrame:
             return
         i = min(self.used[k], len(options) - 1)
         self.used[k] += 1
+        if self.delay and m.type != P.SET_PARAM:
+            t = threading.Timer(self.delay, self._send_quietly, args=(conn, options[i]))
+            t.daemon = True
+            t.start()
+            return
         self._send(conn, options[i])
         if m.type == P.SET_PARAM and self.hang_up == "hello":
             conn.shutdown(socket.SHUT_RDWR)
@@ -203,6 +214,12 @@ class FakeFrame:
     def _send(self, conn, m):
         with self._lock:
             conn.sendall(m.encode())
+
+    def _send_quietly(self, conn, m):
+        try:
+            self._send(conn, m)
+        except OSError:
+            pass
 
     def send(self, m: P.Message) -> None:
         """Send a message to the connected client."""
@@ -245,8 +262,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=5253)
     ap.add_argument("--busy", action="store_true", help="turn every client away (DashBoard open)")
+    ap.add_argument("--delay", type=float, default=0.0, help="hold every answer this many ms")
     a = ap.parse_args(list(argv) if argv is not None else None)
-    fake = FakeFrame(host=a.host, port=a.port, beat=1.0)
+    fake = FakeFrame(host=a.host, port=a.port, beat=1.0, delay=a.delay / 1000)
     fake.busy = a.busy
     print(f"fake openGear frame on {a.host}:{fake.port}{' (busy)' if a.busy else ''}", flush=True)
     try:

@@ -260,12 +260,23 @@ def get_external_object(dst: int, object_id: int, offset: int = 0) -> Message:
     return _req(dst, GET_EXTERNAL_OBJECT, struct.pack(">BHH", 0, object_id, offset))
 
 
-def hello(client_name: str) -> Message:
+def hello(client_name: str, force: int = 0) -> Message:
     """The connection introduction DashBoard sends first: SET_PARAM of
     OID 0xFF03 on the controller. The only write the library sends; it
-    changes no setting (the controller answers with a status value)."""
+    changes no setting (the controller answers with a status value).
+
+    ``force`` is the first 16-bit word, 0 from DashBoard. og-param (Rust,
+    cross-check only) sends 1 there to "displace another client". That is
+    *unverified* on any frame: only ``opengearwire HOST hello-test
+    --force`` sends it, never ``Frame``.
+    """
     name = client_name.encode("utf-8") + b"\x00"
-    value = struct.pack(">HHBH", 0, 0, 1, len(name)) + name
+    value = struct.pack(">HHBH", force, 0, 1, len(name)) + name
+    return hello_value(value)
+
+
+def hello_value(value: bytes) -> Message:
+    """SET_PARAM 0xFF03 on the controller with this exact value."""
     return _req(CONTROLLER, SET_PARAM, struct.pack(">BHB", 0, CONNECTION_OID, len(value)) + value)
 
 

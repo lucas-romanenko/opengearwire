@@ -226,6 +226,12 @@ in several menus.
    *unknown*, DashBoard sends zeros and a 1). The controller answers with
    value `00 01 00 01 00 00` (og-param reads: allowed = 1, "URM state" =
    1, refusal reason = 0) and then sends REPORT_0x11 `01`.
+   og-param sends its own hello with the value's first word = 1 to
+   "displace another client" (its README: connections are forced by
+   default; `--no-force` "avoids displacing another client"), so that
+   word may be a **force** flag. *Unverified* on the MFC-8322-S: no
+   capture of a forced hello, nor of the frame's refusal. `opengearwire
+   HOST hello-test --force` is the test (run with DashBoard connected).
 3. **Cards announce themselves**: within a second every card has sent a
    report (they report their current draw every second), and DashBoard
    starts on each device the moment it first hears it. It never sends a
@@ -249,6 +255,19 @@ every parameter, descriptor, option list and menu the capture has, so
 they were requests whose answer the snapshot does not show (a menu
 state, a parameter count) or a value the frame also reports on its own.
 Which ones is *unknown*; the next run lists them.
+
+**Descriptors are per model, values per card.** On the capture the ten
+DRA-8804s (software 1.05) gave byte-identical descriptors and external
+objects for the same OID list, so the library can keep descriptors
+between connections keyed by product, software rev and OID list
+(`opengearwire.cache`) and read values only. Half of a full read is
+descriptors (601 of 1,246 requests).
+
+**Losses.** DashBoard never had more than one request in flight per
+device. Nine of its first requests (one or two per card, all in the
+first 3 s) got no answer and were answered at once when resent 2.5 s
+later: cards without a loss were read in 0.6 s, cards with one or two in
+3.1 / 5.7 s. The frame answers in 3.7 ms median (p90 6.8 ms, max 29 ms).
 
 Each device was fully read 0.5–6.0 s after connecting (601 parameters
 in all); the late ones were those that waited out a 2.5 s retry. After

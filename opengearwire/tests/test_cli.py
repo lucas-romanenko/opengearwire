@@ -58,3 +58,32 @@ def test_unanswered_listed_on_stderr_and_in_snapshot(fake, capsys, monkeypatch):
     assert [(u["slot"], u["oid"]) for u in s["unanswered"]] == [(4, "0x0b0b")]
     assert "opengearwire: 1 request(s) never answered" in cap.err
     assert "slot 4 GET_PARAM 0x0b0b 'Channel Options'" in cap.err
+
+
+def test_hello_test_prints_the_reply(fake, capsys):
+    from opengearwire.__main__ import hello_test
+
+    assert hello_test("127.0.0.1", fake.port, force=False, listen=0.5) == 0
+    out = capsys.readouterr().out
+    assert "hello reply words (1, 1, 0)" in out
+    assert "force" in out.splitlines()[0] and "first word 1" not in out
+
+
+def test_hello_test_while_busy_shows_the_hang_up(fake, capsys):
+    from opengearwire.__main__ import hello_test
+
+    fake.busy = True
+    hello_test("127.0.0.1", fake.port, force=False, listen=0.5)
+    out = capsys.readouterr().out
+    assert "closed by the frame" in out or "reset by the frame" in out
+    assert "hello reply" not in out
+
+
+def test_forced_hello_layout():
+    from opengearwire import _protocol as P
+
+    plain = P.hello("x").content
+    forced = P.hello("x", 1).content
+    # SET_PARAM content: 00, oid 0xff03, length, value; the value's first word
+    assert plain[4:6] == b"\x00\x00" and forced[4:6] == b"\x00\x01"
+    assert plain[6:] == forced[6:]

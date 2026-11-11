@@ -13,7 +13,7 @@ wire format is in [`opengearwire/docs/PROTOCOL.md`](opengearwire/docs/PROTOCOL.m
 
 ## Status
 
-- **0.3.0, read-only.** Verified against one capture: an OGX frame with
+- **0.4.0, read-only.** Verified against one capture: an OGX frame with
   an MFC-8322-S controller and ten DRA-8804 reclocking DAs. 3,940 of its
   3,941 messages decode completely; the client rebuilds the same
   parameter tree DashBoard got.
@@ -85,6 +85,34 @@ with Frame("192.0.2.10") as f:
 - `Tree.apply(message)` builds the same tree from any message source (a
   capture, a test), with no network.
 
+### Faster reads: keep the descriptors
+
+A parameter's descriptor (name, type, choices, alarm table) is fixed by
+the card's firmware; its value is not. Give `Frame` a mapping and it
+keeps the descriptors between connections, so a later read of the same
+product at the same software rev asks for **values only** (about half
+the requests; ten cards of one model share one entry):
+
+```python
+store = {}  # or your own mapping, e.g. backed by a database (entries are JSON-ready)
+with Frame("192.0.2.10", descriptors=store) as f:
+    f.discover()
+    f.describe(menus=False, final_round=False, on_device=lambda slot: print("read", slot))
+    paint(f.snapshot())  # every device has had its first pass
+    f.final_round()  # now ask again what got lost; f.unanswered is what never came
+```
+
+- **Values are never kept**: every value comes from the frame on this
+  connection. A cache entry is descriptors, external objects and the
+  requests no card of that model ever answered (later reads skip those
+  instead of waiting them out; `describe(skip_unanswered=False)` asks
+  them again).
+- `final_round=False` returns once every device has had its retries;
+  lost requests wait for `final_round()`. `on_device(slot)` is called as
+  each device's first pass ends, so an app can paint as cards come in.
+- `Frame.requests` / `Frame.resent` count what was sent.
+- A second `describe()` on the same connection reads values only.
+
 Nothing runs on a timer: each call does what it says on one connection
 and returns. One request in flight per device, all devices in parallel.
 
@@ -96,7 +124,16 @@ opengearwire 192.0.2.10 params 4         # every parameter of slot 4
 opengearwire 192.0.2.10 read 4 0x0b04    # fresh value(s) by OID or exact name
 opengearwire 192.0.2.10 watch 10         # pushed changes for 10 s
 opengearwire 192.0.2.10 snapshot         # the whole frame as JSON
+opengearwire 192.0.2.10 hello-test       # what the frame answers to a hello (DashBoard open)
+opengearwire 192.0.2.10 hello-test --force   # also the "displace the other client" hellos
 ```
+
+`hello-test` is for one question: can a client take the frame over
+from DashBoard? It sends DashBoard's hello on its own connection and
+prints every byte the frame answers until it hangs up; `--force` then
+tries og-param's forced hellos (first word of the 0xFF03 value = 1),
+which, **if** the controller honours them, cut DashBoard off. Unverified
+on any frame; `Frame` never sends them.
 
 `--json` for machine output, `--timeout` for the silence limit.
 Requests the frame never answered are listed on stderr (and in the
@@ -123,8 +160,11 @@ fake.busy = True  # "DashBoard is connected": every client is turned away (Frame
 fake.close()
 ```
 
+`FakeFrame(delay=0.02)` holds every answer 20 ms (devices still answer
+in parallel), to see how an app copes with a slower network.
+
 ```sh
-python -m opengearwire.testing --port 5253   # a fake frame to point an app at
+python -m opengearwire.testing --port 5253 --delay 20   # a fake frame to point an app at
 ```
 
 ## Development

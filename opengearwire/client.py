@@ -30,14 +30,22 @@ How it talks, copied from DashBoard 10 on the capture:
   second, so ``timeout`` seconds without a single byte from it means the
   link is dead. There is no fixed total.
 - Nothing runs on a timer. Every method touches only what it says.
+- Descriptors can be kept between connections (``descriptors=``, a
+  mapping; see ``opengearwire.cache``): a device whose product, software
+  rev and OID list were seen before is read values only, about half the
+  requests. Values are always read from the frame on this connection.
+- The first pass need not wait on lost requests: ``describe(...,
+  final_round=False)`` returns once every device has had its retries,
+  and ``final_round()`` asks the rest later (an app paints first).
 """
 
 import select
 import socket
 import time
-from typing import Callable, Dict, Generator, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Generator, Iterable, List, MutableMapping, Optional, Set, Tuple
 
 from . import _protocol as P
+from . import cache
 from .model import Change, Device, Tree, address_of, slot_of
 
 PORT = 5253
@@ -107,6 +115,7 @@ class Frame:
         retries: int = 3,
         client_name: Optional[str] = None,
         connect: Callable[..., socket.socket] = socket.create_connection,
+        descriptors: Optional[MutableMapping] = None,
     ):
         from . import __version__
 
@@ -131,6 +140,20 @@ class Frame:
         self._connecting = False
         self.on_change: Optional[Callable[[Change], None]] = None
         self.hello: Tuple[int, ...] = ()
+        #: Where descriptors are kept between connections (any mapping:
+        #: ``cache.key(device)`` -> ``cache.entry(...)``), or None.
+        self.descriptors = descriptors
+        #: Slots whose descriptors came from ``descriptors`` this time.
+        self.cache_hits: List[int] = []
+        #: Messages sent (hello and every resend included), and resends.
+        self.requests = 0
+        self.resent = 0
+        #: Requests given up on in a first pass run with
+        #: ``final_round=False``, waiting for ``final_round()``.
+        self._pending: Dict[int, List[P.Message]] = {}
+        #: OIDs skipped per device because its cache entry says the
+        #: device never answers for them.
+        self._skipped: Dict[int, Set[int]] = {}
 
     # ------------------------------------------------------------ socket
 
@@ -166,6 +189,7 @@ class Frame:
         return FrameError("the frame closed the connection")
 
     def _send(self, m: P.Message) -> None:
+        self.requests += 1
         data = m.encode()
         while data:
             try:
@@ -222,12 +246,15 @@ class Frame:
             raise FrameError(f"no answer to {P.NAMES.get(req.type, hex(req.type))}")
         return out[0]
 
-    def _run(self, exchanges: Dict[int, Exchange], final: bool = False) -> None:
+    def _run(
+        self, exchanges: Dict[int, Exchange], final: bool = False, defer: bool = False
+    ) -> None:
         """Drive one exchange per device, one request in flight each.
 
         A request unanswered after every retry is skipped (its exchange
         gets None and goes on) and asked once more in a final round when
         all exchanges are done; only then is it listed as unanswered.
+        With ``defer`` the final round waits for ``final_round()``.
         """
         live: Dict[int, list] = {}  # dev -> [gen, req, sent_at, tries]
         gave_up: Dict[int, List[P.Message]] = {}
@@ -266,9 +293,27 @@ class Frame:
                     advance(dev, gen, None)
                     continue
                 entry[2], entry[3] = now, tries + 1
+                self.resent += 1
                 self._send(req)
-        if gave_up:
+        if gave_up and defer:
+            for dev, reqs in gave_up.items():
+                self._pending.setdefault(dev, []).extend(reqs)
+        elif gave_up:
             self._run({dev: self._again(dev, reqs) for dev, reqs in gave_up.items()}, final=True)
+            self._store_all()
+
+    @property
+    def pending(self) -> int:
+        """Requests waiting for ``final_round()``."""
+        return sum(len(v) for v in self._pending.values())
+
+    def final_round(self) -> None:
+        """Ask once more what a ``describe(final_round=False)`` gave up
+        on; what still gets no answer goes to ``unanswered``."""
+        pending, self._pending = self._pending, {}
+        if pending:
+            self._run({dev: self._again(dev, reqs) for dev, reqs in pending.items()}, final=True)
+            self._store_all()
 
     def _again(self, a: int, reqs: List[P.Message]) -> Exchange:
         """The final round: each skipped request once more, and if a late
@@ -351,12 +396,34 @@ class Frame:
         """Slots heard from so far, controller (0) first."""
         return sorted(slot_of(a) for a in self.tree.devices)
 
-    def describe(self, slots: Optional[Iterable[int]] = None, menus: bool = True) -> None:
+    def describe(
+        self,
+        slots: Optional[Iterable[int]] = None,
+        menus: bool = True,
+        *,
+        final_round: bool = True,
+        on_device: Optional[Callable[[int], None]] = None,
+        skip_unanswered: bool = True,
+    ) -> None:
         """Every parameter's descriptor and value (and the menus) of the
-        given slots (default: every slot heard), all slots in parallel."""
+        given slots (default: every slot heard), all slots in parallel.
+
+        Descriptors already known (read earlier on this connection, or
+        found in ``descriptors``) are not asked again: then only values
+        are read. ``on_device(slot)`` is called as each device's first
+        pass is done. With ``final_round=False`` lost requests wait for
+        ``final_round()``. ``skip_unanswered=False`` asks again what a
+        cache entry says the device never answers.
+        """
         if slots is None:
             slots = self.slots()
-        self._run({address_of(s): self._describe(address_of(s), menus) for s in slots})
+
+        def one(a: int) -> Exchange:
+            yield from self._describe(a, menus, skip_unanswered)
+            if on_device is not None:
+                on_device(slot_of(a))
+
+        self._run({address_of(s): one(address_of(s)) for s in slots}, defer=not final_round)
 
     def identify(self, slots: Optional[Iterable[int]] = None) -> Dict[int, str]:
         """Product name of each slot (two small reads per slot)."""
@@ -402,13 +469,37 @@ class Frame:
             yield P.get_menu_oids(a, s, i)
             yield P.get_menu_state(a, s, i)
 
-    def _describe(self, a: int, menus: bool) -> Exchange:
+    def _describe(self, a: int, menus: bool, skip_unanswered: bool = True) -> Exchange:
         dev = self.tree.device(a)
         yield P.get_numparams(a)
         yield P.get_param_oids(a)
-        yield from self._params(a, list(dev.oids))
+        oids = list(dev.oids)
+        done: Set[int] = set()
+        skip: Set[int] = set()
+        if self.descriptors is not None:
+            # What the cache is keyed on: two values, read like any other.
+            for o in (cache.PRODUCT, cache.SOFTWARE_REV):
+                if o in oids:
+                    yield P.get_param(a, o)
+                    done.add(o)
+            known = self._cached(dev)
+            if known is not None:
+                self.cache_hits.append(dev.slot)
+                if skip_unanswered:
+                    skip = cache.unanswered(known)
+            self._skipped[a] = skip
+        for o in oids:
+            if o in skip:
+                continue
+            p = dev.params.get(o)
+            if p is None or p.descriptor is None:
+                yield P.get_descriptor(a, o)
+            if o not in done:
+                yield P.get_param(a, o)
         for obj in dev.external_ids():
-            yield from self._external(a, obj)
+            if obj not in dev.external:
+                yield from self._external(a, obj)
+        self._store(dev)
         if not menus:
             return
         for s in range(3):
@@ -418,6 +509,62 @@ class Frame:
             if r.rc != P.RC_OK:
                 break
             yield from self._menuset(a, s)
+
+    # ------------------------------------------------- descriptor cache
+
+    def _cached(self, dev: Device) -> Optional[dict]:
+        """The cache entry for this device, filed into the tree, or None."""
+        k = cache.key(dev)
+        if k is None:
+            return None
+        e = self.descriptors.get(k)
+        if e is None or not cache.install(self.tree, dev, e):
+            return None
+        return e
+
+    def _store(self, dev: Device) -> None:
+        """Keep the descriptors (never a value) of this device's product
+        and software rev, written only when the entry changed.
+
+        Cards of one model share an entry: it gets every descriptor any
+        of them gave, and lists as unanswered only what NONE of them
+        answered (a request one card ignores may be answered by another).
+        """
+        if self.descriptors is None:
+            return
+        k = cache.key(dev)
+        if k is None:
+            return
+        same = [d for d in map(self.tree.device, self._skipped) if cache.key(d) == k]
+        never: Optional[Set[int]] = None
+        for d in same:
+            mine = set(self._skipped[d.address])
+            mine |= {
+                int(u["oid"], 16) for u in self.unanswered if u.get("slot") == d.slot and "oid" in u
+            }
+            never = mine if never is None else never & mine
+        e = cache.entry(dev, never or ())
+        for d in same:
+            for o, p in d.params.items():
+                if p.descriptor_raw is not None:
+                    e["descriptors"].setdefault(f"0x{o:04x}", p.descriptor_raw.hex())
+            for obj, raw in d.external.items():
+                e["external"].setdefault(str(obj), raw.hex())
+        e["descriptors"] = dict(sorted(e["descriptors"].items()))
+        e["external"] = dict(sorted(e["external"].items()))
+        if not e["descriptors"]:
+            return
+        if self.descriptors.get(k) != e:
+            self.descriptors[k] = e
+
+    def _store_all(self) -> None:
+        stored = set()
+        for a in self._skipped:
+            dev = self.tree.device(a)
+            k = cache.key(dev)
+            if k is not None and k not in stored:
+                stored.add(k)
+                self._store(dev)
 
     def read(self, slot: int, *keys) -> Dict[int, object]:
         """Fresh values of the given OIDs (or names, once described)."""

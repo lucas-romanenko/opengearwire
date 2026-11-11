@@ -6,8 +6,9 @@ read; ``snapshot`` turns it into plain data. ``docs/PROTOCOL.md`` is the
 wire format.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
+from . import cache
 from ._protocol import ProtocolError, RemoteError
 from .client import Frame, FrameBusy, FrameError
 from .model import Change, Device, Parameter, Tree, address_of, slot_of
@@ -23,6 +24,7 @@ __all__ = [
     "ProtocolError",
     "RemoteError",
     "Tree",
+    "cache",
     "address_of",
     "slot_of",
     "snapshot",
