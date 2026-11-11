@@ -55,6 +55,9 @@ class Parameter:
     oid: int
     descriptor: Optional[P.Descriptor] = None
     raw: Optional[bytes] = None
+    #: The GET_DESCRIPTOR reply's content as received: what a descriptor
+    #: cache keeps (``opengearwire.cache``).
+    descriptor_raw: Optional[bytes] = None
     #: The constraint with any external object resolved.
     constraint: Optional[P.Constraint] = None
 
@@ -269,6 +272,7 @@ class Tree:
                 d = P.parse_descriptor(m)
                 p = dev.param(d.oid)
                 p.descriptor = d
+                p.descriptor_raw = m.content
                 p.constraint = d.constraint
                 if d.constraint.kind == "external":
                     dev.resolve()
