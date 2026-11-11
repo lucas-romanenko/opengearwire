@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+.venv/
+# Raw captures never go into git: they hold real addresses and serials.
+# Make a sanitized fixture with tools/fixture_from_capture.py instead.
+*.pcap
+*.pcapng
+*.cap

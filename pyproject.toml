@@ -1,0 +1,53 @@
+# One package, `opengearwire`: the openGear Protocol (OGP) over TCP 5253,
+# as Ross DashBoard speaks it to an openGear frame (Ross OGX and partner
+# cards). Protocol only, no UI; read-only until a write is captured.
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opengearwire"
+version = "0.1.0"
+description = "Python library for openGear frames (Ross OGX) over the openGear Protocol, TCP 5253: frame health, every card's parameters, pushed changes"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Lucas Romanenko" }]
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Development Status :: 3 - Alpha",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Video",
+]
+
+[project.urls]
+Repository = "https://github.com/lucas-romanenko/opengearwire"
+
+[project.scripts]
+opengearwire = "opengearwire.__main__:main"
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-timeout"]
+dev = ["pytest", "pytest-timeout", "ruff"]
+
+[tool.setuptools.packages.find]
+include = ["opengearwire", "opengearwire.*"]
+exclude = ["*.tests", "*.tests.*"]
+
+[tool.setuptools.package-data]
+opengearwire = ["py.typed", "docs/*.md"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF100"]
+ignore = ["UP006", "UP035", "UP045", "UP007"]
