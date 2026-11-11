@@ -13,7 +13,7 @@ it and any document disagree, the capture wins. Anything marked
   clicking through Signal, Setup and Alarms. One TCP connection to port
   5253 plus one HTTP GET. 3,941 OGP messages, 89,940 bytes, no gaps in
   either direction. The sanitized copy is
-  `opengearwire/tests/fixtures/dashboard-session.jsonl`.
+  `opengearwire/fixtures/dashboard-session.jsonl`.
 - **Ross, "DashBoard Application Note: Methods for OGP Developers to
   Speed Up Device Initialization"** (public PDF on
   documentation.rossvideo.com, openGear Partners / DEV DEVELOPMENT

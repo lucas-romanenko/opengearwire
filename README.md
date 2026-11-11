@@ -13,7 +13,7 @@ wire format is in [`opengearwire/docs/PROTOCOL.md`](opengearwire/docs/PROTOCOL.m
 
 ## Status
 
-- **0.2.0, read-only.** Verified against one capture: an OGX frame with
+- **0.3.0, read-only.** Verified against one capture: an OGX frame with
   an MFC-8322-S controller and ten DRA-8804 reclocking DAs. 3,940 of its
   3,941 messages decode completely; the client rebuilds the same
   parameter tree DashBoard got.
@@ -31,16 +31,16 @@ ways on a live frame; Ross's MFC manual (Table 1, Feature Comparison)
 lists more than one concurrent TCP control connection for the MFC-OG3-N
 only.
 
-So: **connect, read, disconnect quickly.** Don't keep a `Frame` open in
-a service, and keep `watch` short; close DashBoard before running the
-CLI. When the frame hangs up before answering anything after the hello,
+So: **connect, read, disconnect quickly.** Keep a `Frame` open only
+while someone is looking at what it reads, never in the background, and
+keep `watch` short; close DashBoard before running the CLI. When the frame hangs up before answering anything after the hello,
 the library raises `FrameBusy` (a `FrameError`) saying so; a hang-up
 later in a read is the plain `FrameError`.
 
 ## Install
 
 ```sh
-pip install "opengearwire @ git+https://github.com/lucas-romanenko/opengearwire.git@main"   # a tag once he releases
+pip install opengearwire
 ```
 
 Python 3.10 or newer. Standard library only.
@@ -103,6 +103,30 @@ Requests the frame never answered are listed on stderr (and in the
 snapshot's `unanswered`).
 `python -m opengearwire` works too.
 
+## Testing without a frame
+
+`opengearwire.testing` is a fake frame for your own tests and for
+developing an app: it listens on 127.0.0.1 and answers from the bundled
+capture (sanitized), including the frame's one-client-at-a-time
+behaviour.
+
+```python
+from opengearwire import Frame, FrameBusy
+from opengearwire.testing import FakeFrame
+
+fake = FakeFrame()  # a free port on 127.0.0.1: fake.port
+with Frame("127.0.0.1", fake.port) as f:
+    f.discover()
+    fake.report(18, 0x0705, b"12 (1694A) / 8 (1855A)\x00")  # a card pushes a change
+    print(f.watch(0.5))
+fake.busy = True  # "DashBoard is connected": every client is turned away (FrameBusy)
+fake.close()
+```
+
+```sh
+python -m opengearwire.testing --port 5253   # a fake frame to point an app at
+```
+
 ## Development
 
 ```sh
@@ -111,16 +135,20 @@ python -m pytest
 ruff check . && ruff format --check .
 ```
 
-The suite needs no hardware: `opengearwire/tests/conftest.py` runs a fake
-frame on 127.0.0.1 that answers from the captured session. To make a
+The suite needs no hardware: it runs `opengearwire.testing`'s fake
+frame on 127.0.0.1, answering from the captured session. To make a
 fixture from a new capture (it replaces serials, MAC, names, passwords and
 IP addresses and refuses to write if any original survives):
 
 ```sh
-python tools/fixture_from_capture.py CAPTURE.pcapng opengearwire/tests/fixtures/NAME.jsonl
+python tools/fixture_from_capture.py CAPTURE.pcapng opengearwire/fixtures/NAME.jsonl
 ```
 
 Raw captures never go into git (`.gitignore` blocks them).
+
+A release is a tag `v<version>` matching `project.version`: the tag push
+publishes it to PyPI (`.github/workflows/publish.yml`, trusted
+publishing, no token in the repository).
 
 Not affiliated with or endorsed by Ross Video Ltd. openGear, DashBoard
 and OGX are trademarks of Ross Video.
