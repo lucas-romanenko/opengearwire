@@ -1,0 +1,86 @@
+# Publish opengearwire to PyPI, via trusted publishing (OIDC): no API
+# token lives in this repository. The same road as bmdwire.
+#
+# ON PYPI.ORG, ONCE (manual): the project `opengearwire` needs a trusted
+# publisher — owner lucas-romanenko, repository opengearwire, workflow
+# publish.yml, environment pypi. Before the first release that is a
+# "pending publisher" added from the account's Publishing page; until it
+# exists PyPI refuses the upload.
+#
+# A release is a tag `v<version>` on main whose version equals
+# `project.version` in pyproject.toml; the tag PUSH starts this workflow.
+# Pure Python, standard library only: one sdist and one universal wheel.
+# Re-publish an existing tag with "Run workflow" and the tag name.
+name: Publish to PyPI
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish, v<version> (e.g. v0.3.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ github.event.inputs.tag || github.ref_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tag version matches pyproject.toml
+        shell: bash
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::tag '$TAG' is not v<version>"; exit 1 ;;
+          esac
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          echo "tag=$TAG pyproject version=$version"
+          test "${TAG#v}" = "$version"
+      - name: Build the sdist and the wheel
+        run: |
+          pip install build twine
+          python -m build
+          twine check dist/*
+          ls -l dist/
+      - name: The wheel carries the fake frame's capture
+        run: |
+          python -m zipfile -l dist/*.whl | grep -q 'opengearwire/fixtures/dashboard-session.jsonl'
+          pip install dist/*.whl
+          cd /tmp && python -c "from opengearwire.testing import FakeFrame; FakeFrame().close()"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: What is being published
+        run: ls -l dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A manual "Run workflow" on a tag already on PyPI is a no-op; a
+          # tag-triggered run fails on a duplicate, so a tag made without a
+          # version bump is caught loudly.
+          skip-existing: ${{ github.event_name == 'workflow_dispatch' }}

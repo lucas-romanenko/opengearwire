@@ -6,7 +6,7 @@ read; ``snapshot`` turns it into plain data. ``docs/PROTOCOL.md`` is the
 wire format.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from ._protocol import ProtocolError, RemoteError
 from .client import Frame, FrameBusy, FrameError
