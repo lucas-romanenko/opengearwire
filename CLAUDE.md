@@ -14,6 +14,9 @@ no web app; the frontend lives in AV Server. Not part of bmdwire
 - **Network rules.** Nothing on a timer against a frame; each call
   touches only what it says; one request in flight per device; timeouts
   are no-progress (silence), never fixed totals.
+- **One client at a time.** An MFC-8322-S takes one control connection
+  (confirmed live): every connection is short, never held open, or it
+  locks DashBoard out.
 - **No real identities in the repo.** No site or company names, real
   IPs, MACs, serials or frame names in code, tests, docs or commits.
   Raw captures stay out of git; fixtures are made with

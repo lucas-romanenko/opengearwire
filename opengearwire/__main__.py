@@ -9,6 +9,7 @@
 
 Slot 0 is the frame controller. Every command opens one connection,
 does what it says and closes; nothing is ever written to the frame.
+The frame takes one client at a time: close DashBoard first.
 """
 
 import argparse
@@ -120,6 +121,12 @@ def _run(f: Frame, a) -> int:
         out.write("\n")
     if f.unanswered:
         print(f"opengearwire: {len(f.unanswered)} request(s) never answered", file=sys.stderr)
+        for u in f.unanswered:
+            what = u.get("oid") or ", ".join(
+                f"{k} {u[k]}" for k in ("menuset", "menu", "object", "offset") if k in u
+            )
+            name = f" {u['name']!r}" if "name" in u else ""
+            print(f"  slot {u['slot']} {u['request']} {what}{name}", file=sys.stderr)
     return 0
 
 

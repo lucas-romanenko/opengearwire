@@ -42,6 +42,25 @@ it and any document disagree, the capture wins. Anything marked
 - **No keepalive from the client.** The frame reports on its own (see
   *Reports*), the controller's frame status every second, so silence
   means a dead link.
+- **One client at a time on the MFC-8322-S.** With DashBoard connected,
+  a second client is hung up on: the frame closes the TCP connection
+  right after it opens, whatever name the hello carries (DashBoard's own
+  name string was tried too). With the library connected, DashBoard is
+  locked out the same way. Seen on the first live runs (2026-11) and
+  confirmed both ways by hand, on one frame. It matches Ross's *MFC-OG3-N
+  and MFC-8322-S User Guide* (v10-rev3), Table 1 Feature Comparison
+  Chart, which ticks "Supports more than one concurrent TCP Control
+  connections, such as DashBoard, or a control panel" for the MFC-OG3-N
+  only. The live run also reported Active Connections = 1 while the
+  library was connected. *Unknown*: whether the frame says anything
+  before hanging up (no capture of the refusal yet); the hello reply's
+  "allowed" word may be where a refusal would show.
+
+  For users of the library this means: **connect, read, disconnect
+  quickly.** Every held connection (a long `watch`, a service keeping a
+  `Frame` open) locks DashBoard out for that long, and an open DashBoard
+  locks the library out. The library raises `FrameBusy` when the frame
+  hangs up before answering anything after the hello.
 
 ## Framing
 
@@ -220,6 +239,16 @@ in several menus.
    parameters (0x0751 on the controller, 0x0B01 on each card); the
    answers repeat values already read, so the library skips them.
 5. A request with no answer after 2.5 s is sent again.
+
+The library does the same, with one difference: a request still
+unanswered after its retries is skipped, asked again in one final round
+once everything else is done, and only then reported (`Frame.unanswered`,
+the snapshot's `unanswered` list). On the first live run, three
+requests stayed unanswered after four sends each; the snapshot still had
+every parameter, descriptor, option list and menu the capture has, so
+they were requests whose answer the snapshot does not show (a menu
+state, a parameter count) or a value the frame also reports on its own.
+Which ones is *unknown*; the next run lists them.
 
 Each device was fully read 0.5–6.0 s after connecting (601 parameters
 in all); the late ones were those that waited out a 2.5 s retry. After

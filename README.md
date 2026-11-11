@@ -13,13 +13,29 @@ wire format is in [`opengearwire/docs/PROTOCOL.md`](opengearwire/docs/PROTOCOL.m
 
 ## Status
 
-- **0.1.0, read-only.** Verified against one capture: an OGX frame with
+- **0.2.0, read-only.** Verified against one capture: an OGX frame with
   an MFC-8322-S controller and ten DRA-8804 reclocking DAs. 3,940 of its
   3,941 messages decode completely; the client rebuilds the same
   parameter tree DashBoard got.
 - **No writes** except the connection hello DashBoard itself sends
   (it sets nothing). Setting changes come once one is captured.
-- Not yet run against a live frame.
+- Run against the live frame: its snapshot has every parameter the
+  capture has.
+
+## One client at a time
+
+An **MFC-8322-S controller takes one control connection at a time**.
+While DashBoard is connected, the frame hangs up on this library, and
+while the library is connected, DashBoard is locked out. Confirmed both
+ways on a live frame; Ross's MFC manual (Table 1, Feature Comparison)
+lists more than one concurrent TCP control connection for the MFC-OG3-N
+only.
+
+So: **connect, read, disconnect quickly.** Don't keep a `Frame` open in
+a service, and keep `watch` short; close DashBoard before running the
+CLI. When the frame hangs up before answering anything after the hello,
+the library raises `FrameBusy` (a `FrameError`) saying so; a hang-up
+later in a read is the plain `FrameError`.
 
 ## Install
 
@@ -50,7 +66,10 @@ with Frame("192.0.2.10") as f:
   `timeout` is **no-progress**: seconds without a byte from the frame
   (which reports its status every second), not a total. An unanswered
   request is resent after `retry_after` seconds, as DashBoard does;
-  after `retries` it is listed in `Frame.unanswered` and the rest goes on.
+  after `retries` the rest goes on, and it is asked again in one final
+  round at the end. What still has no answer is listed in
+  `Frame.unanswered` (slot, request, OID and name, or menu / object) and
+  in the snapshot's `unanswered`.
 - `discover()` listens: every card reports on its own within about a
   second, and it stops as soon as the controller's Active Cards count is
   reached. It assumes no layout: any of the 20 slots, single- or
@@ -60,7 +79,9 @@ with Frame("192.0.2.10") as f:
   `snapshot()`.
 - `Parameter.value` is the decoded value; `.display` is what DashBoard
   shows (choice labels, active alarm names, IP addresses); `.severity`
-  is 0/1/2 for alarm tables.
+  is 0/1/2 for alarm tables. In the snapshot each parameter has
+  `value` and, where they differ, `display` beside it (Channel A Status:
+  `"value": 16, "display": ["No input"]`).
 - `Tree.apply(message)` builds the same tree from any message source (a
   capture, a test), with no network.
 
@@ -78,6 +99,8 @@ opengearwire 192.0.2.10 snapshot         # the whole frame as JSON
 ```
 
 `--json` for machine output, `--timeout` for the silence limit.
+Requests the frame never answered are listed on stderr (and in the
+snapshot's `unanswered`).
 `python -m opengearwire` works too.
 
 ## Development

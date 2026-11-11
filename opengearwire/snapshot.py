@@ -6,7 +6,7 @@ takes it as is. Nothing here touches a network: it reads a Tree.
 """
 
 import time
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from . import _protocol as P
 from .model import Device, Tree
@@ -61,7 +61,10 @@ def _ordered(dev: Device):
     ]
 
 
-def snapshot(tree: Tree, host: Optional[str] = None) -> dict:
+def snapshot(tree: Tree, host: Optional[str] = None, unanswered: Iterable[dict] = ()) -> dict:
+    """The frame as plain data. ``unanswered`` (``Frame.unanswered``) are
+    the requests the frame never answered: what this snapshot lacks or
+    may hold only from an earlier report."""
     ctl = tree.controller
     devices = [card(ctl)] + [card(c) for c in tree.cards]
     worst = max((a["severity"] for d in devices for a in d["alarms"]), default=0)
@@ -76,4 +79,5 @@ def snapshot(tree: Tree, host: Optional[str] = None) -> dict:
         },
         "controller": devices[0],
         "cards": devices[1:],
+        "unanswered": [dict(u) for u in unanswered],
     }

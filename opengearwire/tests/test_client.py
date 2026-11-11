@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from opengearwire import Frame, FrameError
+from opengearwire import Frame, FrameBusy, FrameError, snapshot
 from opengearwire import _protocol as P
 from opengearwire.client import _key
 
@@ -101,13 +101,66 @@ def test_lost_request_is_retried(fake):
 
 
 def test_never_answered_is_reported_not_fatal(fake):
-    k = _key(P.get_descriptor(0x14, 0x0B0B))
+    k = _key(P.get_param(0x14, 0x0B0B))
     fake.drop[k] = 99
     with frame(fake, retries=1) as f:
         f.discover()
         f.describe([4], menus=False)
-        assert f.unanswered == [(4, "GET_DESCRIPTOR", "000b0b")]
+        assert f.unanswered == [
+            {
+                "slot": 4,
+                "request": "GET_PARAM",
+                "oid": "0x0b0b",
+                "name": "Channel Options",
+                "content": "000b0b",
+            }
+        ]
         assert f.device(4).find(0x0B0A).name == "Enable Rear 12V"
+        snap = f.snapshot()
+    assert snap["unanswered"] == f.unanswered
+    # retries=1: two sends in the main round, two more in the final round
+    assert len([m for m in fake.received if _key(m) == k]) == 4
+
+
+def test_final_round_catches_a_late_answer(fake):
+    k = _key(P.get_descriptor(0x14, 0x0B0B))
+    fake.drop[k] = 2  # lost twice: the main round gives up, the final round gets it
+    with frame(fake, retries=1) as f:
+        f.discover()
+        f.describe([4], menus=False)
+        assert f.unanswered == []
+        assert f.device(4).find(0x0B0B).name == "Channel Options"
+
+
+def test_final_round_finishes_what_a_late_answer_opens(fake, dashboard_tree):
+    """A late OID list (or menu count) is followed through, not just filed."""
+    for req in (P.get_param_oids(0x14), P.get_menu_count(0x14, 1)):
+        fake.drop[_key(req)] = 2
+    with frame(fake, retries=1) as f:
+        f.discover()
+        f.describe([4])
+        assert f.unanswered == []
+        have = f.device(4)
+    want = dashboard_tree.devices[0x14]
+    assert have.oids == want.oids
+    assert have.external == want.external
+    assert all(have.params[o].descriptor == want.params[o].descriptor for o in want.oids)
+    assert {k: (m.name, m.oids) for k, m in have.menus.items()} == {
+        k: (m.name, m.oids) for k, m in want.menus.items()
+    }
+
+
+def test_unanswered_in_snapshot_is_json(fake):
+    import json
+
+    fake.drop[_key(P.get_menu_state(0x14, 0, 1))] = 99
+    with frame(fake, retries=0) as f:
+        f.discover()
+        f.describe([4])
+        s = snapshot(f.tree, unanswered=f.unanswered)
+    assert json.loads(json.dumps(s))["unanswered"] == [
+        {"slot": 4, "request": "GET_MENU_STATE", "menuset": 0, "menu": 1, "content": "000001"}
+    ]
 
 
 def test_read_by_oid(fake):
@@ -138,11 +191,32 @@ def test_silence_is_a_dead_link(fake):
 
 
 def test_closed_connection(fake):
+    """A hang-up once the frame has answered is the plain error."""
     with frame(fake) as f:
+        f.discover()
         assert wait_for(lambda: fake.conn is not None)
         fake.conn.shutdown(socket.SHUT_RDWR)
-        with pytest.raises(FrameError):
+        with pytest.raises(FrameError) as e:
             f.watch(1.0)
+        assert not isinstance(e.value, FrameBusy)
+        assert str(e.value) == "the frame closed the connection"
+
+
+@pytest.mark.parametrize("when", ["connect", "hello"])
+def test_hang_up_at_connect_is_busy(session, when):
+    """An MFC-8322-S with a client already (DashBoard) hangs up on us."""
+    from .conftest import FakeFrame
+
+    fake = FakeFrame(session, hang_up=when)
+    try:
+        f = frame(fake)
+        with pytest.raises(FrameBusy, match="DashBoard is probably connected") as e:
+            f.open()
+            f.discover()
+        assert "one control connection at a time" in str(e.value)
+        assert isinstance(e.value, FrameError)
+    finally:
+        fake.close()
 
 
 def _readdress(session, old, new):

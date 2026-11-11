@@ -58,9 +58,14 @@ class FakeFrame:
     frame never saw gets no answer, like a lost one. After the hello it
     announces every device with the first report each sent on the
     capture, the way the real frame's periodic reports announced them.
+
+    ``hang_up`` plays a controller that already has a client (an
+    MFC-8322-S takes one): "connect" closes at once, "hello" closes
+    right after answering the hello.
     """
 
-    def __init__(self, session):
+    def __init__(self, session, hang_up=None):
+        self.hang_up = hang_up
         self.replies = defaultdict(list)
         self.announce = []
         heard = set()
@@ -96,6 +101,9 @@ class FakeFrame:
             self.conn, _ = self.srv.accept()
         except OSError:
             return
+        if self.hang_up == "connect":
+            self.conn.close()
+            return
         threading.Thread(target=self._beat, daemon=True).start()
         d = P.Deframer()
         while True:
@@ -125,6 +133,9 @@ class FakeFrame:
         i = min(self.used[k], len(options) - 1)
         self.used[k] += 1
         self.send(options[i])
+        if m.type == P.SET_PARAM and self.hang_up == "hello":
+            self.conn.shutdown(socket.SHUT_RDWR)
+            return
         if m.type == P.SET_PARAM:
             self.send(P.Message(P.CONTROLLER, P.BROADCAST, P.REPORT_0x11, b"\x01"))
             for a in self.announce:
